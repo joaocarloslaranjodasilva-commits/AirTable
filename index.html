@@ -226,6 +226,20 @@
     el.textContent = msg;
   }
 
+  async function fetchWithRetry(url, options, maxRetries = 4) {
+    let delay = 2000;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const res = await fetch(url, options);
+      if (res.status !== 429) return res;
+      if (attempt === maxRetries) return res;
+      const retryAfter = res.headers.get('Retry-After');
+      const wait = retryAfter ? parseInt(retryAfter, 10) * 1000 : delay;
+      showStatus('info', `⟳ Rate limit erreicht — warte ${Math.round(wait/1000)}s... (Versuch ${attempt+1}/${maxRetries})`);
+      await new Promise(r => setTimeout(r, wait));
+      delay *= 2;
+    }
+  }
+
   async function scrape() {
     const token = document.getElementById('token').value.trim();
     const baseId = document.getElementById('baseid').value.trim();
@@ -243,14 +257,13 @@
 
     try {
       const PROXY = 'https://procuresave-proxy.joaocarloslaranjodasilva.workers.dev/airtable';
+      const headers = { Authorization: `Bearer ${token}` };
 
       // 1. Get schema (tables + fields)
-      const schemaRes = await fetch(`${PROXY}/v0/meta/bases/${baseId}/tables`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const schemaRes = await fetchWithRetry(`${PROXY}/v0/meta/bases/${baseId}/tables`, { headers });
 
       if (!schemaRes.ok) {
-        const err = await schemaRes.json();
+        const err = await schemaRes.json().catch(() => ({}));
         throw new Error(`Schema Fehler ${schemaRes.status}: ${err.error?.message || schemaRes.statusText}`);
       }
 
@@ -265,9 +278,9 @@
         const table = tables[i];
         showStatus('info', `⟳ Lese Tabelle ${i+1}/${tables.length}: ${table.name}...`);
         try {
-          const recRes = await fetch(
+          const recRes = await fetchWithRetry(
             `${PROXY}/v0/${baseId}/${encodeURIComponent(table.name)}?pageSize=3`,
-            { headers: { Authorization: `Bearer ${token}` } }
+            { headers }
           );
           if (recRes.ok) {
             const rec = await recRes.json();
